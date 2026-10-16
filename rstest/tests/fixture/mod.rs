@@ -51,6 +51,18 @@ mod should {
     }
 
     #[test]
+    fn preserve_bodies_with_unused_braces_denied() {
+        let (output, _) = run_test("no_unused_braces.rs");
+
+        TestResults::new()
+            .ok("injects_default_world")
+            .ok("resolves_default_world")
+            .ok_in("injects_parameterized_world::case_1")
+            .ok_with("injects_matrix_world::", false, 2)
+            .assert(output);
+    }
+
+    #[test]
     fn be_accessible_from_other_module() {
         let (output, _) = run_test("from_other_module.rs");
 

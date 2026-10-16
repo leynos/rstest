@@ -74,10 +74,9 @@ mod single_test_should {
         let result: ItemFn = single(input_fn.clone(), Default::default()).ast();
 
         let inner_fn = extract_inner_test_function(&result);
-        let inner_fn_impl: Stmt = inner_fn.block.stmts.last().cloned().unwrap();
 
         assert_eq!(inner_fn.sig, input_fn.sig);
-        assert_eq!(inner_fn_impl.display_code(), input_fn.block.display_code());
+        assert_eq!(inner_fn.block, input_fn.block);
     }
 
     #[test]
@@ -635,11 +634,10 @@ mod cases_should {
         let tokens = parametrize(item_fn.clone(), info);
 
         let mut output = TestsGroup::from(tokens);
-        let test_impl: Stmt = output.requested_test.block.stmts.last().cloned().unwrap();
 
         output.requested_test.attrs = vec![];
         assert_eq!(output.requested_test.sig, item_fn.sig);
-        assert_eq!(test_impl.display_code(), item_fn.block.display_code());
+        assert_eq!(output.requested_test.block, item_fn.block);
     }
 
     #[test]
@@ -1171,11 +1169,10 @@ mod matrix_cases_should {
         let tokens = matrix(item_fn.clone(), data.into());
 
         let mut output = TestsGroup::from(tokens);
-        let test_impl: Stmt = output.requested_test.block.stmts.last().cloned().unwrap();
 
         output.requested_test.attrs = vec![];
         assert_eq!(output.requested_test.sig, item_fn.sig);
-        assert_eq!(test_impl.display_code(), item_fn.block.display_code());
+        assert_eq!(output.requested_test.block, item_fn.block);
     }
 
     #[test]

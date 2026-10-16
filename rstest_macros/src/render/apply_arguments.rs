@@ -82,7 +82,7 @@ impl ApplyArguments for ItemFn {
     fn apply_arguments(&mut self, arguments: &mut ArgumentsInfo, _: &mut ()) {
         let args = self.sig.inputs.iter().cloned().collect::<Vec<_>>();
         self.sig.apply_arguments(arguments, &mut ());
-        let rebound_awaited_args = args
+        let mut rebound_awaited_args = args
             .iter()
             .filter_map(MaybePat::maybe_pat)
             .filter(|p| arguments.is_future_await(p))
@@ -90,14 +90,17 @@ impl ApplyArguments for ItemFn {
             .map(|p| {
                 let a = &p.ident;
                 quote::quote! { let #p = #a.await; }
-            });
-        let orig_block_impl = self.block.clone();
-        self.block = parse_quote! {
-            {
-                #(#rebound_awaited_args)*
-                #orig_block_impl
-            }
-        };
+            })
+            .peekable();
+        if rebound_awaited_args.peek().is_some() {
+            let orig_block_impl = self.block.clone();
+            self.block = parse_quote! {
+                {
+                    #(#rebound_awaited_args)*
+                    #orig_block_impl
+                }
+            };
+        }
     }
 }
 
@@ -160,6 +163,78 @@ mod should {
         item_fn.sig.apply_arguments(&mut args, &mut ());
 
         assert_eq!(orig, item_fn)
+    }
+
+    #[rstest]
+    #[case::no_arguments("fn f() -> u32 { 42 }")]
+    #[case::ordinary_arguments("fn f(a: u32) -> u32 { a }")]
+    #[case::statements("fn f(a: u32) -> u32 { let b = a + 1; b }")]
+    #[case::nested_body("fn f(a: u32) -> u32 { { let b = a + 1; b } }")]
+    fn preserve_body_without_awaited_arguments(#[case] source: &str) {
+        let mut item_fn: ItemFn = source.ast();
+        let original = item_fn.clone();
+        let original_body = item_fn.block.display_code();
+
+        item_fn.apply_arguments(&mut ArgumentsInfo::default(), &mut ());
+
+        assert_eq!(original, item_fn);
+        assert_eq!(original_body, item_fn.block.display_code());
+    }
+
+    #[test]
+    fn transform_future_signature_without_wrapping_body() {
+        use crate::parse::arguments::FutureArg;
+
+        let mut item_fn: ItemFn =
+            "async fn f<'b>(mut a: &u32, b: &'b str) -> u32 { *a.await }".ast();
+        let original_body = item_fn.block.clone();
+        let expected: ItemFn = parse_quote! {
+            async fn f<'_a, 'b>(
+                a: impl ::core::future::Future<Output = &'_a u32>,
+                b: &'b str
+            ) -> u32 { *a.await }
+        };
+        let mut arguments = ArgumentsInfo::default();
+        arguments.set_future(pat("a").with_mut(), FutureArg::Define);
+
+        item_fn.apply_arguments(&mut arguments, &mut ());
+
+        assert_eq!(expected.sig, item_fn.sig);
+        assert_eq!(original_body, item_fn.block);
+    }
+
+    #[test]
+    fn preserve_await_order_and_original_body_scope() {
+        use crate::parse::arguments::FutureArg;
+
+        let mut item_fn: ItemFn = parse_quote! {
+            async fn f(mut first: u32, pending: u32, second: u32) -> u32 {
+                let first = first + 1;
+                first + second
+            }
+        };
+        let expected: ItemFn = parse_quote! {
+            async fn f(
+                first: impl ::core::future::Future<Output = u32>,
+                pending: impl ::core::future::Future<Output = u32>,
+                second: impl ::core::future::Future<Output = u32>
+            ) -> u32 {
+                let mut first = first.await;
+                let second = second.await;
+                {
+                    let first = first + 1;
+                    first + second
+                }
+            }
+        };
+        let mut arguments = ArgumentsInfo::default();
+        arguments.set_future(pat("first").with_mut(), FutureArg::Await);
+        arguments.set_future(pat("pending"), FutureArg::Define);
+        arguments.set_future(pat("second"), FutureArg::Await);
+
+        item_fn.apply_arguments(&mut arguments, &mut ());
+
+        assert_eq!(expected, item_fn);
     }
 
     #[rstest]
